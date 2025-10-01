@@ -1,0 +1,13 @@
+visual_slam:
+  ros__parameters:
+    base_frame: base_link
+    odom_frame: odom
+    map_frame: map
+    enable_landmarks: false
+    rectify_images: false
+    use_stereo: true
+    enable_imu_fusion: true
+    imu_time_offset: 0.0
+    # Expect rectified inputs from depthai-ros
+    left_camera_frame: oak_left_camera_frame
+    right_camera_frame: oak_right_camera_frame
