@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'roxx_jetson_bringup'
 
@@ -10,6 +12,11 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        # install launch and config files:
+        (os.path.join('share', 'roxx_jetson_bringup', 'launch'), 
+         glob('launch/*.launch.py')),
+        (os.path.join('share', 'roxx_jetson_bringup', 'config'), 
+         glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

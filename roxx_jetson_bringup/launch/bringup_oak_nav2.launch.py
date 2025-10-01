@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
@@ -27,105 +27,130 @@ def generate_launch_description():
             get_package_share_directory('depthai_ros_driver'), '/launch/camera.launch.py'
         ]),
         launch_arguments={
-            # Common, adjust to your camera/needs:
-            # (If camera.launch.py exposes different names, adapt here)
             'camera_model': 'OAK-D-Pro',
             'enable_imu': 'true',
             'enable_depth': 'true',
             'enable_rectified': 'true',
             'publish_tf': 'true',
             'use_rviz': 'false',
-            'parent_frame': 'base_link',          # OAK mounted to robot base
-            'frame_prefix': 'oak'                 # yields oak_* frames
+            'parent_frame': 'base_link',
+            'frame_prefix': 'oak'
         }.items()
     )
 
-    # 2) Isaac ROS Visual SLAM (stereo + IMU -> odometry in base_link/odom)
-    vslam_node = Node(
-        package='isaac_ros_visual_slam',
-        executable='visual_slam_node',
-        name='visual_slam',
-        parameters=[vslam_yaml, {'use_sim_time': use_sim_time}],
-        remappings=[
-            # DepthAI topic names: adapt if yours differ
-            ('stereo_camera/left/image',  '/oak/left/image_rect'),
-            ('stereo_camera/right/image', '/oak/right/image_rect'),
-            ('stereo_camera/left/camera_info',  '/oak/left/camera_info'),
-            ('stereo_camera/right/camera_info', '/oak/right/camera_info'),
-            ('imu', '/oak/imu/data')
-        ],
-        output='screen'
-    )
-
-    # 3) robot_localization: EKF for odom (VO+IMU)
-    ekf_odom = Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='ekf_odom',
-        output='screen',
-        parameters=[ekf_odom_yaml, {'use_sim_time': use_sim_time}]
-    )
-
-    # 4) navsat_transform to convert GPS to local frame using IMU + odom
-    navsat = Node(
-        package='robot_localization',
-        executable='navsat_transform_node',
-        name='navsat_transform',
-        output='screen',
-        parameters=[navsat_yaml, {'use_sim_time': use_sim_time}],
-        remappings=[
-            ('imu', '/oak/imu/data'),
-            ('gps/fix', '/gnss/fix'),
-            ('gps/filtered', '/gps/filtered'),        # optional output
-            ('odometry/filtered', '/odometry/filtered_odom'),  # from ekf_odom
-            ('odometry/gps', '/odometry/gps')         # navsat output
+    # 2) Isaac ROS Visual SLAM - wait for OAK to be ready
+    vslam_node = TimerAction(
+        period=3.0,
+        actions=[
+            Node(
+                package='isaac_ros_visual_slam',
+                executable='visual_slam_node',
+                name='visual_slam',
+                parameters=[vslam_yaml, {'use_sim_time': use_sim_time}],
+                remappings=[
+                    ('stereo_camera/left/image',  '/oak/left/image_rect'),
+                    ('stereo_camera/right/image', '/oak/right/image_rect'),
+                    ('stereo_camera/left/camera_info',  '/oak/left/camera_info'),
+                    ('stereo_camera/right/camera_info', '/oak/right/camera_info'),
+                    ('imu', '/oak/imu/data')
+                ],
+                output='screen'
+            )
         ]
     )
 
-    # 5) robot_localization: EKF for map (fuse VO/IMU with navsat odom)
-    ekf_map = Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='ekf_map',
-        output='screen',
-        parameters=[ekf_map_yaml, {'use_sim_time': use_sim_time}]
-    )
-
-    # 6) NVBlox (depth -> 3D + 2D costmap for Nav2)
-    nvblox_node = Node(
-        package='isaac_ros_nvblox',
-        executable='nvblox_node',
-        name='nvblox_node',
-        output='screen',
-        parameters=[nvblox_yaml, {'use_sim_time': use_sim_time}],
-        remappings=[
-            ('depth/image', '/oak/stereo/image_depth'),
-            ('depth/camera_info', '/oak/stereo/camera_info')
+    # 3) robot_localization: EKF for odom
+    ekf_odom = TimerAction(
+        period=4.0,
+        actions=[
+            Node(
+                package='robot_localization',
+                executable='ekf_node',
+                name='ekf_odom',
+                output='screen',
+                parameters=[ekf_odom_yaml, {'use_sim_time': use_sim_time}]
+            )
         ]
     )
 
-    # 7) Nav2 bringup
-    nav2_bringup = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            get_package_share_directory('nav2_bringup'), '/launch/bringup_launch.py'
-        ]),
-        launch_arguments={
-            'use_sim_time': use_sim_time,
-            'params_file': nav2_yaml,
-            'autostart': autostart
-        }.items()
+    # 4) navsat_transform
+    navsat = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='robot_localization',
+                executable='navsat_transform_node',
+                name='navsat_transform',
+                output='screen',
+                parameters=[navsat_yaml, {'use_sim_time': use_sim_time}],
+                remappings=[
+                    ('imu', '/oak/imu/data'),
+                    ('gps/fix', '/gnss/fix'),
+                    ('gps/filtered', '/gps/filtered'),
+                    ('odometry/filtered', '/odometry/filtered_odom'),
+                    ('odometry/gps', '/odometry/gps')
+                ]
+            )
+        ]
+    )
+
+    # 5) robot_localization: EKF for map
+    ekf_map = TimerAction(
+        period=6.0,
+        actions=[
+            Node(
+                package='robot_localization',
+                executable='ekf_node',
+                name='ekf_map',
+                output='screen',
+                parameters=[ekf_map_yaml, {'use_sim_time': use_sim_time}]
+            )
+        ]
+    )
+
+    # 6) NVBlox
+    nvblox_node = TimerAction(
+        period=4.0,
+        actions=[
+            Node(
+                package='isaac_ros_nvblox',
+                executable='nvblox_node',
+                name='nvblox_node',
+                output='screen',
+                parameters=[nvblox_yaml, {'use_sim_time': use_sim_time}],
+                remappings=[
+                    ('depth/image', '/oak/stereo/image_depth'),
+                    ('depth/camera_info', '/oak/stereo/camera_info')
+                ]
+            )
+        ]
+    )
+
+    # 7) Nav2 bringup - start last
+    nav2_bringup = TimerAction(
+        period=7.0,
+        actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource([
+                    get_package_share_directory('nav2_bringup'), '/launch/bringup_launch.py'
+                ]),
+                launch_arguments={
+                    'use_sim_time': use_sim_time,
+                    'params_file': nav2_yaml,
+                    'autostart': autostart
+                }.items()
+            )
+        ]
     )
 
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('autostart', default_value='true'),
-        GroupAction([
-            depthai_launch,
-            vslam_node,
-            ekf_odom,
-            navsat,
-            ekf_map,
-            nvblox_node,
-            nav2_bringup
-        ])
+        depthai_launch,  # Start immediately
+        vslam_node,      # Wait 3s
+        ekf_odom,        # Wait 4s
+        navsat,          # Wait 5s
+        ekf_map,         # Wait 6s
+        nvblox_node,     # Wait 4s
+        nav2_bringup     # Wait 7s
     ])
